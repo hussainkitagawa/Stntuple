@@ -6,7 +6,8 @@
 BEGIN_PROLOG
 Reconstruction : {
 # define the helix finders
-  HelixFinders : [ "AgnosticHelixFinder", "CalHelixFinderDe" ]
+  #HelixFinders : [ "AgnosticHelixFinder", "CalHelixFinderDe" ]
+  HelixFinders : [ "PhiZSeedFinder", "PhiZSeedFinder" ]
 }
 Reconstruction : {
   @table::Reconstruction
@@ -28,19 +29,23 @@ Reconstruction : {
     # NB: positive here refers to helicity, not charge!
     MHDe : {
       @table::TrkReco.producers.MergeHelices
-      HelixFinders : [ "AgnosticHelixFinder", "CalHelixFinderDe", "HelixFinderDe" ]
+      #HelixFinders : [ "AgnosticHelixFinder", "CalHelixFinderDe", "HelixFinderDe" ]
+      HelixFinders : [ "PhiZSeedFinder", "PhiZSeedFinder" ]
     }
     MHDmu : {
       @table::TrkReco.producers.MergeHelices
-      HelixFinders : [ "AgnosticHelixFinder" , "CalHelixFinderDmu", "HelixFinderDmu" ]
+      #HelixFinders : [ "AgnosticHelixFinder" , "CalHelixFinderDmu", "HelixFinderDmu" ]
+      HelixFinders : [ "PhiZSeedFinder", "PhiZSeedFinder" ]
     }
     MHUe : {
       @table::TrkReco.producers.MergeHelices
-      HelixFinders : [ "AgnosticHelixFinder", "CalHelixFinderUe", "HelixFinderUe" ]
+      #HelixFinders : [ "AgnosticHelixFinder", "CalHelixFinderUe", "HelixFinderUe" ]
+      HelixFinders : [ "PhiZSeedFinder", "PhiZSeedFinder" ]
     }
     MHUmu : {
       @table::TrkReco.producers.MergeHelices
-      HelixFinders : [ "AgnosticHelixFinder", "CalHelixFinderUmu", "HelixFinderUmu" ]
+      #HelixFinders : [ "AgnosticHelixFinder", "CalHelixFinderUmu", "HelixFinderUmu" ]
+      HelixFinders : [ "PhiZSeedFinder", "PhiZSeedFinder" ]
     }
     # KinKal fits
 
@@ -238,7 +243,8 @@ Reconstruction : {
   @table::Reconstruction
   # Downstream electron sequence (plus and minus), using merged helices
   DeReco : [
-    TZClusterFinder, AgnosticHelixFinder,   # AgnosticPatRec
+    TZClusterFinder, #AgnosticHelixFinder,   # AgnosticPatRec
+    PhiZSeedFinder,
     CalTimePeakFinderDe, CalHelixFinderDe,  # CalPatRec
     TimeClusterFinderDe, HelixFinderDe,   # TrkPatRec
     MHDe, # helix merging
@@ -246,7 +252,8 @@ Reconstruction : {
   ]
   # Upstream electron sequence (plus and minus)
   UeReco : [
-    TZClusterFinder, AgnosticHelixFinder,   # AgnosticPatRec
+    TZClusterFinder, #AgnosticHelixFinder,   # AgnosticPatRec
+    PhiZSeedFinder,
     CalTimePeakFinderUe, CalHelixFinderUe,  # CalPatRec
     TimeClusterFinderUe, HelixFinderUe,   # TrkPatRec
     MHUe, # helix merging
@@ -254,7 +261,8 @@ Reconstruction : {
   ]
   # Downstream muon sequence (plus and minus)
   DmuReco : [
-    TZClusterFinder, AgnosticHelixFinder,    # AgnosticPatRec
+    TZClusterFinder, #AgnosticHelixFinder,    # AgnosticPatRec
+    PhiZSeedFinder,
     CalTimePeakFinderDmu, CalHelixFinderDmu,  # CalPatRec
     TimeClusterFinderDmu, HelixFinderDmu,   # TrkPatRec
     MHDmu, # helix merging
@@ -262,7 +270,8 @@ Reconstruction : {
   ]
   # Upstream muon sequence (plus and minus)
   UmuReco : [
-    TZClusterFinder, AgnosticHelixFinder,     # AgnosticPatRec
+    TZClusterFinder, #AgnosticHelixFinder,     # AgnosticPatRec
+    PhiZSeedFinder,
     CalTimePeakFinderUmu, CalHelixFinderUmu,  # CalPatRec
     TimeClusterFinderUmu, HelixFinderUmu,   # TrkPatRec
     MHUmu, # helix merging

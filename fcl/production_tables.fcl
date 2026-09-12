@@ -150,6 +150,23 @@ production.paths : {
             , KKDmuPar                                 # Seed fit (chisquared, no drift)
            ]
 #------------------------------------------------------------------------------
+# p333: PhiZSeed template 
+#------------------------------------------------------------------------------
+    p365 : [ @sequence::Reconstruction.CaloReco,
+            # @sequence::Reconstruction.TrkHitReco,         # PBTFSD, makeSH, makePH, flagPH
+            @sequence::TrkHitReco.PrepareHits ,             # PBTFSD, makeSH, makePH, flagPH
+            # ------------ @sequence::Reconstruction.DmuReco  
+            # TimeClusterFinderDmu, 
+            #FlagBkgHits,
+            TZClusterFinder, #PhiClusterFinder, 
+            PhiZSeedFinder, #HelixFinderDmu, 
+
+            #CalTimePeakFinderDmu, CalHelixFinderDmu  , # CalPatRec
+
+            MHDmu,                                      # 2nd step: MHDmuM + MHDmuP
+            KKDmuPar                            # Seed fit (chisquared, no drift)
+           ]
+#------------------------------------------------------------------------------
 # p34: reco path for pi+ --> e+ nu : KinKal fits
 #      aim for one-track events, do not use PhiClusterFinder
 #------------------------------------------------------------------------------
