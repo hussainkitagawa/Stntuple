@@ -186,11 +186,11 @@ int  StntupleInitTimeClusterBlock::InitDataBlock(TStnDataBlock* Block, AbsEvent*
 // identify time cluster with the particle which produced most hits
 //-----------------------------------------------------------------------------
     int ipart  = -1;
-    int max_nh = sim_nh[0];
+    int max_nh = 0;
 
     const mu2e::SimParticle* best_sim(nullptr);
 
-    for (int ip=1; ip<np; ip++) {
+    for (int ip=0; ip<np; ip++) {
       if (sim_nh[ip] > max_nh) {
 	max_nh = sim_nh[ip];
 	ipart  = ip;
