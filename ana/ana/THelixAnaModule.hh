@@ -75,6 +75,8 @@ public:
     TH1F*    fNHits;
     TH1F*    fNComboHits;
     TH1F*    fT0;
+    TH1F*    fT0Zoom;        // 500-900 ns
+    TH1F*    fClusterTime;   // calorimeter cluster time, 500-900 ns
     TH1F*    fClusterEnergy;
   
   };
@@ -90,6 +92,9 @@ public:
     TH1F*    fPt;
     TH1F*    fLambda;   //dz/dphi
     TH1F*    fT0;
+    TH1F*    fT0Zoom;        // 500-900 ns
+    TH1F*    fDeltaT0;       // T0_i - T0_j (i<j) over helix pairs in one event
+    TH1F*    fClusterTimeZoom; // calorimeter cluster time, 500-900 ns
     TH1F*    fT0Err;
     TH1F*    fD0;
     TH1F*    fBestAlg;
@@ -115,7 +120,12 @@ public:
     TH1F*    fNStrawHits;
     TH1F*    fNSimp;
     TH1F*    fEffNSimp[10];
-    TH1F*    fMomPt;//end
+    TH1F*    fTStart;        // StartPos().T(), 500-900 ns
+    TH1F*    fTEnd;          // EndPos().T(), 500-900 ns
+    TH1F*    fMomPt;         // pT
+    TH1F*    fMom;           // total momentum
+    TH1F*    fDtStart;       // signed dT of StartPos().T() between the 2 pbar-origin particles
+    TH1F*    fDtDirect;      // signed dT of the direct pbar daughters' start times for the 2 particles
   };
 
  struct TrackHist_t {
@@ -282,7 +292,8 @@ public:
 
   int               fNSimp; // N simparticles
   int               fEffNSimp[10];// Effective N simparticles
-  int               fMomPt;// Partcile Pt
+  double            fMomPt;   // particle pT
+  double            fMomTot;  // particle total momentum
 
   int               fNHyp;
   int               fBestHyp[10];
