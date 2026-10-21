@@ -19,6 +19,7 @@
 #include "Stntuple/obj/TStrawHitBlock.hh"
 #include "Stntuple/obj/TGenpBlock.hh"
 #include "Stntuple/obj/TSimpBlock.hh"
+#include "Stntuple/obj/TStepPointMCBlock.hh"
 
 #include "Stntuple/base/TStnArrayI.hh"
 
@@ -227,6 +228,30 @@ public:
   };
 
 
+  //-----------------------------------------------------------------------------
+  // helix MC truth matching for events with fEffNSimp[1] == 2 (needs TStnHelix v8)
+  // owner of a helix = dominant MC particle McSimID(0), purity = McPurity()
+  //-----------------------------------------------------------------------------
+  struct PbarHelixHist_t {
+    TH1F*    fPurityPbar;    // purity of helices owned by one of the 2 pbar-origin particles
+    TH1F*    fPurityOther;   // purity of the other helices
+    TH1F*    fSharePbar;     // share of the owner in helices owned by a pbar-origin particle
+    TH1F*    fTimeDiff[3];   // timediff T0_i - T0_j (signed, i < j): [0] S-pure, [1] S-mixed, [2] B
+    TH1F*    fPairCat;       // pair category: 0 S-pure, 1 S-mixed, 2 B, 3 D
+                             // stage-0 helix variables, all helices (no cut):
+                             // [0] owned by a pbar-origin particle, [1] other
+    TH1F*    fNComboHits[2];
+    TH1F*    fP[2];
+    TH1F*    fD0[2];
+    TH1F*    fTanDip[2];
+    TH1F*    fPropDir[2];
+    TH1F*    fChi2XY[2];
+    TH1F*    fChi2ZPhi[2];
+    TH1F*    fT0Err[2];
+    TH1F*    fSelTruth;      // owners among the kept helices: 0 both pbar particles, 1 one, 2 none, 3 no kept helix
+    TH1F*    fSelT0Span;     // max - min T0 of the selected helices
+  };
+
   struct TrackEffHist_t {
     TH1F*    fPtMc;			// denominator
     TH1F*    fPtReco;			// numerator
@@ -246,6 +271,7 @@ public:
     GenpHist_t*        fGenp        [kNGenpHistSets];
     SimpHist_t*        fSimp        [kNSimpHistSets];
     TrackHist_t*     fTrack         [kNTrackHistSets];
+    PbarHelixHist_t*   fPbarHelix;
   };
 //-----------------------------------------------------------------------------
 //  data members
@@ -259,6 +285,7 @@ public:
   TStrawHitBlock*        fStrawHitBlock;
   TGenpBlock*            fGenpBlock;
   TSimpBlock*            fSimpBlock;
+  TStepPointMCBlock*     fVDetBlock;          // virtual detector step points (compressDigiMCs:virtualdetector)
   TStnTrackBlock*        fTrackBlock;
 
   TString                fHelixBlockName;
@@ -333,6 +360,7 @@ public:
 
   void    BookTimeClusterHistograms (TimeClusterHist_t* Hist, const char* Folder);
   void    BookHelixHistograms       (HelixHist_t*       Hist, const char* Folder);
+  void    BookPbarHelixHistograms   (PbarHelixHist_t*   Hist, const char* Folder);
 
   void    FillEventHistograms       (EventHist_t* Hist);
   void    FillGenpHistograms        (GenpHist_t*  Hist, TGenParticle* Genp   );
@@ -344,6 +372,8 @@ public:
 
   void    BookHistograms();
   void    FillHistograms();
+                                        // stage-0 helix quality selection
+  bool    IsGoodHelix(TStnHelix* Helix);
 
 
   void    Debug();

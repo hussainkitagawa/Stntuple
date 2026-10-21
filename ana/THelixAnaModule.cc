@@ -16,6 +16,8 @@
 #include "TEnv.h"
 #include "TSystem.h"
 #include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <cstdlib> // std::strtod
@@ -58,10 +60,23 @@
 
 ClassImp(stntuple::THelixAnaModule)
 
+namespace {
+  //-----------------------------------------------------------------------------
+  // stage-0 helix selection (IsGoodHelix) and helix time grouping
+  //-----------------------------------------------------------------------------
+  const double kHelixMaxChi2XY      = 5.0;
+  const double kHelixMaxChi2ZPhi    = 5.0;
+  // const int    kHelixMinNComboHits  = 10;    // to be tuned with pbar_hel_0/ncombohits_*
+  // const double kHelixMinP           = 50.;   // MeV/c, to be tuned with pbar_hel_0/p_*
+  // const double kHelixMaxAbsD0       = 250.;  // mm, to be tuned with pbar_hel_0/d0_*
+  const double kHelixTimeWindow     = 80.0;   // ns, max |T0_i - T0_j| of an accepted helix pair (MultiHelixFilter timeWindow)
+}
+
     namespace stntuple {
   //-----------------------------------------------------------------------------
   THelixAnaModule::THelixAnaModule(const char* name, const char* title) : TStnModule(name, title) {
     fPtMin = 1.;
+    fVDetBlock = nullptr;
 
     fMinT0 = 0; // do not cut on time by default
                 //-----------------------------------------------------------------------------
@@ -148,8 +163,10 @@ ClassImp(stntuple::THelixAnaModule)
 
     HBook1F(Hist->fNHelices[0], "nhel_0", Form("%s: N(helices)", Folder), 10, 0, 10, Folder);
     HBook1F(Hist->fNHelices[1], "nhel_1", Form("%s: N(helices)", Folder), 10, 0, 10, Folder);
-    // HBook1F(Hist->fNHelices[1],"nhel_1"  ,Form("%s: N(helices)[2]"                   ,Folder), 10,0, 10,Folder);
-    // HBook1F(Hist->fNHelices[2],"nhel_2"  ,Form("%s: N(helices)[3]"                   ,Folder), 10,0, 10,Folder);
+    HBook1F(Hist->fNHelices[2], "nhel_2", Form("%s: N(good helices), stage-0 cuts", Folder), 10, 0, 10, Folder);
+    HBook1F(Hist->fNHelices[3], "nhel_3", Form("%s: N(selected helices), partner in time", Folder), 10, 0, 10, Folder);
+    HBook1F(Hist->fNHelices[4], "nhel_4", Form("%s: N(time groups) of selected helices", Folder), 10, 0, 10, Folder);
+    HBook1F(Hist->fNHelices[5], "nhel_5", Form("%s: N(helices) kept by the selection", Folder), 10, 0, 10, Folder);
 
     HBook1F(Hist->fNTracks[0], "ntrk_0", Form("%s: N(tracks)", Folder), 5, 0, 5, Folder);
     HBook1F(Hist->fNTracks[1], "ntrk_1", Form("%s: N(tracks)", Folder), 5, 0, 5, Folder);
@@ -164,6 +181,52 @@ ClassImp(stntuple::THelixAnaModule)
 
     HBook1F(Hist->fNTimeClusters[0], "ntcl_0", Form("%s: N(time clusters)[0]", Folder), 100, 0, 100, Folder);
     HBook1F(Hist->fNTimeClusters[1], "ntcl_1", Form("%s: N(time clusters)[1]", Folder), 100, 0, 100, Folder);
+  }
+
+  //-----------------------------------------------------------------------------
+  void THelixAnaModule::BookPbarHelixHistograms(PbarHelixHist_t * Hist, const char* Folder) {
+    HBook1F(Hist->fPurityPbar, "purity_pbar", Form("%s: purity of helices owned by a pbar-origin particle; purity", Folder), 52, 0, 1.04, Folder);
+    HBook1F(Hist->fPurityOther, "purity_other", Form("%s: purity of helices not owned by a pbar-origin particle; purity", Folder), 52, 0, 1.04, Folder);
+    HBook1F(Hist->fSharePbar, "share_pbar", Form("%s: share of the owner in helices owned by a pbar-origin particle; share", Folder), 52, 0, 1.04, Folder);
+    // signed T0_i - T0_j, 10 ns bins
+    HBook1F(Hist->fTimeDiff[0], "timediff_spure", Form("%s: timediff of S-pure helix pairs; T0_{i} - T0_{j} [ns]", Folder), 60, -300, 300, Folder);
+    HBook1F(Hist->fTimeDiff[1], "timediff_smixed", Form("%s: timediff of S-mixed helix pairs; T0_{i} - T0_{j} [ns]", Folder), 60, -300, 300, Folder);
+    HBook1F(Hist->fTimeDiff[2], "timediff_b", Form("%s: timediff of B helix pairs; T0_{i} - T0_{j} [ns]", Folder), 160, -800, 800, Folder);
+    HBook1F(Hist->fPairCat, "paircat", Form("%s: helix pair category", Folder), 4, -0.5, 3.5, Folder);
+
+    const char* label[4] = {"S-pure", "S-mixed", "B", "D"};
+    for (int i = 0; i < 4; ++i) Hist->fPairCat->GetXaxis()->SetBinLabel(i + 1, label[i]);
+
+    const char* cls[2] = {"pbar", "other"};
+    for (int i = 0; i < 2; ++i) {
+      HBook1F(Hist->fNComboHits[i], Form("ncombohits_%s", cls[i]), Form("%s: N(combo hits), %s helices; N(combo hits)", Folder, cls[i]), 100, 0, 100, Folder);
+      HBook1F(Hist->fP[i], Form("p_%s", cls[i]), Form("%s: P, %s helices; P [MeV/c]", Folder, cls[i]), 250, 0, 500, Folder);
+      HBook1F(Hist->fD0[i], Form("d0_%s", cls[i]), Form("%s: D0, %s helices; D0 [mm]", Folder, cls[i]), 200, -500, 500, Folder);
+      HBook1F(Hist->fTanDip[i], Form("tandip_%s", cls[i]), Form("%s: tan(dip) = #lambda/R, %s helices; tan(dip)", Folder, cls[i]), 200, -5, 5, Folder);
+      HBook1F(Hist->fPropDir[i], Form("propdir_%s", cls[i]), Form("%s: PropDir, %s helices; PropDir", Folder, cls[i]), 3, -1.5, 1.5, Folder);
+      HBook1F(Hist->fChi2XY[i], Form("chi2xy_%s", cls[i]), Form("%s: Chi2XY, %s helices; #chi^{2}_{XY}/ndof", Folder, cls[i]), 100, 0, 20, Folder);
+      HBook1F(Hist->fChi2ZPhi[i], Form("chi2zphi_%s", cls[i]), Form("%s: Chi2ZPhi, %s helices; #chi^{2}_{Z#phi}/ndof", Folder, cls[i]), 100, 0, 20, Folder);
+      HBook1F(Hist->fT0Err[i], Form("t0err_%s", cls[i]), Form("%s: T0Err, %s helices; T0Err [ns]", Folder, cls[i]), 100, 0, 50, Folder);
+    }
+
+    HBook1F(Hist->fSelTruth, "seltruth", Form("%s: owners among the kept helices", Folder), 4, -0.5, 3.5, Folder);
+    HBook1F(Hist->fSelT0Span, "selt0span", Form("%s: T0 span of the selected helices; max T0 - min T0 [ns]", Folder), 100, 0, 500, Folder);
+    const char* tlabel[4] = {"both pbar", "one pbar", "no pbar", "none kept"};
+    for (int i = 0; i < 4; ++i) Hist->fSelTruth->GetXaxis()->SetBinLabel(i + 1, tlabel[i]);
+  }
+
+  //-----------------------------------------------------------------------------
+  // stage-0 helix quality selection: only the chi2 cuts are active for now,
+  // the other cuts are kept commented out until tuned
+  //-----------------------------------------------------------------------------
+  bool THelixAnaModule::IsGoodHelix(TStnHelix* Helix) {
+    if (Helix->Chi2XY() > kHelixMaxChi2XY) return false;
+    if (Helix->Chi2ZPhi() > kHelixMaxChi2ZPhi) return false;
+    // if (Helix->NComboHits() < kHelixMinNComboHits) return false;
+    // if (Helix->P() < kHelixMinP) return false;
+    // if (std::abs(Helix->D0()) > kHelixMaxAbsD0) return false;
+    // if (Helix->PropDir() < 0) return false;     // reject upstream-going helices
+    return true;
   }
 
   //-----------------------------------------------------------------------------
@@ -343,6 +406,14 @@ ClassImp(stntuple::THelixAnaModule)
       }
     }
     //-----------------------------------------------------------------------------
+    // book pbar helix truth-matching histograms
+    //-----------------------------------------------------------------------------
+    sprintf(folder_name, "pbar_hel_0");
+    fol = (TFolder*)hist_folder->FindObject(folder_name);
+    if (!fol) fol = hist_folder->AddFolder(folder_name, folder_name);
+    fHist.fPbarHelix = new PbarHelixHist_t;
+    BookPbarHelixHistograms(fHist.fPbarHelix, Form("Hist/%s", folder_name));
+    //-----------------------------------------------------------------------------
     // book event histograms
     //-----------------------------------------------------------------------------
     int book_event_histset[kNEventHistSets];
@@ -460,6 +531,7 @@ ClassImp(stntuple::THelixAnaModule)
 
     Hist->fNHelices[0]->Fill(fNHelices[0]);
     Hist->fNHelices[1]->Fill(fNHelices[1]);
+    for (int i = 2; i <= 5; ++i) Hist->fNHelices[i]->Fill(fNHelices[i]);
     Hist->fNTracks[0]->Fill(fNTracks[0]);
     Hist->fNTracks[1]->Fill(fNTracks[1]);
     //for (int i=0; i<3; i++) {
@@ -760,6 +832,7 @@ ClassImp(stntuple::THelixAnaModule)
 
     RegisterDataBlock("GenpBlock", "TGenpBlock", &fGenpBlock);
     RegisterDataBlock("SimpBlock", "TSimpBlock", &fSimpBlock);
+    RegisterDataBlock("VDetBlock", "TStepPointMCBlock", &fVDetBlock);
     RegisterDataBlock("TrackBlock", "TStnTrackBlock", &fTrackBlock);
     //-----------------------------------------------------------------------------
     // book histograms
@@ -1393,6 +1466,189 @@ ClassImp(stntuple::THelixAnaModule)
     }
 
     //--------------------------------------------------------------------------------
+    // helix time selection, reproduces MultiHelixFilter with minNHelices = 2:
+    // every pair of good helices with |T0_i - T0_j| <= kHelixTimeWindow is accepted
+    // (for a pair, max - min T0 = |dT0|), and the selected helices are the union of the
+    // helices of all accepted pairs, i.e. good helices with at least one partner in time.
+    // Helices without a partner in time are treated as pile-up. Reco quantities only.
+    //
+    // fNHelices[2]: N(good helices) passing IsGoodHelix(), includes N = 1
+    // fNHelices[3]: N(selected helices), i.e. good helices with a partner in time
+    // fNHelices[4]: N(separated time groups) among the selected helices: helices linked
+    //               by accepted pairs belong to the same group. MultiHelixFilter keeps all
+    //               groups; this counts how often more than one group is found
+    // fNHelices[5]: N(helices) kept by the selection
+    //               0         : no good helix
+    //               1         : one good helix, or >= 2 good helices without a pair in time;
+    //                           in the latter case only the helix with the most combo hits
+    //                           is kept (single-helix category, the others are pile-up)
+    //               N(sel)>=2 : good helices with a partner in time
+    //               The selection case can be recovered from fNHelices[2] and [3]:
+    //               no pair in time <=> fNHelices[2] >= 2 and fNHelices[3] == 0
+    //--------------------------------------------------------------------------------
+    std::vector<TStnHelix*> goodHelices;
+    for (int i = 0; i < fNHelices[0]; ++i) {
+      TStnHelix* h = fHelixBlock->Helix(i);
+      if (IsGoodHelix(h)) goodHelices.push_back(h);
+    }
+    std::sort(goodHelices.begin(), goodHelices.end(),
+              [](TStnHelix* a, TStnHelix* b) { return a->T0() < b->T0(); });
+
+    int nGood = goodHelices.size();
+    std::vector<bool> hasPartner(nGood, false);
+    for (int i = 0; i < nGood; ++i) {
+      for (int j = i + 1; j < nGood; ++j) {
+        if (std::abs(goodHelices[j]->T0() - goodHelices[i]->T0()) <= kHelixTimeWindow) {
+          hasPartner[i] = true;
+          hasPartner[j] = true;
+        }
+      }
+    }
+
+    std::vector<TStnHelix*> selHelices;
+    for (int i = 0; i < nGood; ++i) {
+      if (hasPartner[i]) selHelices.push_back(goodHelices[i]);
+    }
+
+    // helices kept by the selection (single-helix category when there is no pair in time)
+    std::vector<TStnHelix*> keptHelices = selHelices;
+    if (keptHelices.empty() and nGood >= 1) {
+      keptHelices.push_back(*std::max_element(goodHelices.begin(), goodHelices.end(),
+                                              [](TStnHelix* a, TStnHelix* b) { return a->NComboHits() < b->NComboHits(); }));
+    }
+
+    // selected helices are sorted in T0, a new group starts when the gap to the
+    // previous selected helix exceeds the window (no accepted pair across the gap)
+    int nGroups = selHelices.empty() ? 0 : 1;
+    for (size_t i = 1; i < selHelices.size(); ++i) {
+      if (selHelices[i]->T0() - selHelices[i - 1]->T0() > kHelixTimeWindow) nGroups++;
+    }
+    // future: when several groups are found, keep the group whose T0 matches the
+    // calorimeter cluster time, e.g. smallest |<T0>(group) - ClusterTime()|
+
+    fNHelices[2] = nGood;
+    fNHelices[3] = selHelices.size();
+    fNHelices[4] = nGroups;
+    fNHelices[5] = keptHelices.size();
+
+    //--------------------------------------------------------------------------------
+    // helix MC truth matching (needs TStnHelix v8 MC particle list)
+    // helices: stage-0 quality cuts, IsGoodHelix()
+    // owner  : dominant MC particle McSimID(0), purity = McPurity()
+    // pairs  : 0 S-pure  : owners are the 2 different pbar-origin particles, both purities >= purityThre
+    //          1 S-mixed : owners are the 2 different pbar-origin particles, at least one purity < purityThre
+    //          2 B       : at least one owner is not one of the 2 pbar-origin particles
+    //          3 D       : same owner, not filled in timediff. PhiZSeedFinder already removes
+    //                      identical helices, so these are mostly one particle split into
+    //                      several helices without shared hits; kept separate from S on purpose
+    //--------------------------------------------------------------------------------
+    const double purityThre = 0.5;
+
+    // S-pure helix pairs with |T0_i - T0_j| > spureDtDumpThre: summary lines for the
+    // text dump selected_events_spure_timediff_gt100.txt (written further below)
+    const double spureDtDumpThre = 100.;   // ns
+    std::vector<std::string> spureLargeDt;
+
+    if (fEffNSimp[1] == 2) {
+      std::vector<int> pbarIDs;
+      for (const auto& d : pbarOriginParticles) {
+        if (d.nhits >= 20) pbarIDs.push_back(d.simp_id);
+      }
+
+      std::vector<TStnHelix*> qHelices;
+      bool hasMcList = true;
+      for (int i = 0; i < fNHelices[0]; ++i) {
+        TStnHelix* h = fHelixBlock->Helix(i);
+        if (h->NMcParticles() < 0) {
+          hasMcList = false;
+          break;
+        }
+        if (IsGoodHelix(h)) qHelices.push_back(h);
+      }
+
+      if (not hasMcList) {
+        static bool warned = false;
+        if (not warned) {
+          std::cerr << "[WARN] THelixAnaModule: TStnHelix has no MC particle list (< v8), "
+                    << "pbar_hel_0 histograms are not filled.\n";
+          warned = true;
+        }
+      } else {
+        auto owner = [](TStnHelix* h) { return (h->NStoredMcParticles() > 0) ? h->McSimID(0) : -1; };
+        auto isPbar = [&](int id) { return std::find(pbarIDs.begin(), pbarIDs.end(), id) != pbarIDs.end(); };
+
+        // stage-0 variables of all helices, before any cut
+        for (int i = 0; i < fNHelices[0]; ++i) {
+          TStnHelix* h = fHelixBlock->Helix(i);
+          int ic = isPbar(owner(h)) ? 0 : 1;
+          fHist.fPbarHelix->fNComboHits[ic]->Fill(h->NComboHits());
+          fHist.fPbarHelix->fP[ic]->Fill(h->P());
+          fHist.fPbarHelix->fD0[ic]->Fill(h->D0());
+          if (h->Radius() > 0) fHist.fPbarHelix->fTanDip[ic]->Fill(h->Lambda() / h->Radius());
+          fHist.fPbarHelix->fPropDir[ic]->Fill(h->PropDir());
+          fHist.fPbarHelix->fChi2XY[ic]->Fill(h->Chi2XY());
+          fHist.fPbarHelix->fChi2ZPhi[ic]->Fill(h->Chi2ZPhi());
+          fHist.fPbarHelix->fT0Err[ic]->Fill(h->T0Err());
+        }
+
+        // truth content of the selected helices
+        if (keptHelices.empty()) fHist.fPbarHelix->fSelTruth->Fill(3);
+        else {
+          if (selHelices.size() >= 2) fHist.fPbarHelix->fSelT0Span->Fill(selHelices.back()->T0() - selHelices.front()->T0());
+          std::vector<int> pbarOwners;
+          for (TStnHelix* h : keptHelices) {
+            int o = owner(h);
+            if (isPbar(o) and std::find(pbarOwners.begin(), pbarOwners.end(), o) == pbarOwners.end()) pbarOwners.push_back(o);
+          }
+          fHist.fPbarHelix->fSelTruth->Fill(pbarOwners.size() >= 2 ? 0 : (pbarOwners.size() == 1 ? 1 : 2));
+        }
+
+        for (TStnHelix* h : qHelices) {
+          float purity = h->McPurity();
+          if (isPbar(owner(h))) {
+            fHist.fPbarHelix->fPurityPbar->Fill(purity);
+            fHist.fPbarHelix->fSharePbar->Fill(h->McShare(0));
+          } else if (purity >= 0) {
+            fHist.fPbarHelix->fPurityOther->Fill(purity);
+          }
+        }
+
+        for (size_t i = 0; i < qHelices.size(); ++i) {
+          for (size_t j = i + 1; j < qHelices.size(); ++j) {
+            TStnHelix* hi = qHelices[i];
+            TStnHelix* hj = qHelices[j];
+            int oi = owner(hi);
+            int oj = owner(hj);
+
+            int cat;
+            if (oi >= 0 and oi == oj) cat = 3;
+            else if (isPbar(oi) and isPbar(oj)) {
+              cat = (hi->McPurity() >= purityThre and hj->McPurity() >= purityThre) ? 0 : 1;
+            }
+            else cat = 2;
+
+            fHist.fPbarHelix->fPairCat->Fill(cat);
+            if (cat == 3) continue;
+
+            double timeDiff = hi->T0() - hj->T0();   // signed, i < j in the helix block order
+            fHist.fPbarHelix->fTimeDiff[cat]->Fill(timeDiff);
+
+            if (cat == 0 and std::abs(timeDiff) > spureDtDumpThre) {
+              std::ostringstream os;
+              os << std::fixed << std::setprecision(3)
+                 << "S-pure pair: timediff = T0_i - T0_j = " << timeDiff << " ns"
+                 << " | helix i = " << hi->Number() << " (owner SimID " << oi << ", T0 " << hi->T0()
+                 << ", purity " << std::setprecision(2) << hi->McPurity() << std::setprecision(3) << ")"
+                 << " | helix j = " << hj->Number() << " (owner SimID " << oj << ", T0 " << hj->T0()
+                 << ", purity " << std::setprecision(2) << hj->McPurity() << ")\n";
+              spureLargeDt.push_back(os.str());
+            }
+          }
+        }
+      }
+    }
+
+    //--------------------------------------------------------------------------------
     // fill track histograms
     //--------------------------------------------------------------------------------
     int nhits_track_thre = 20;    //threshold of track StrawHits
@@ -1433,6 +1689,7 @@ ClassImp(stntuple::THelixAnaModule)
         //double      tanDip   = lambda/radius;
         //double      pT       = radius*mm2MeV;
         //if(nhits < 10) continue;
+        //if (helix->NComboHits() < 10) continue;   // N(combo hits) cut, to be tuned
         if (chi2xy > 5.0) continue;
         if (chi2zphi > 5.0) continue;
         nhelix++;
@@ -1528,7 +1785,7 @@ ClassImp(stntuple::THelixAnaModule)
 
       std::ostringstream trackHeader;
       trackHeader << std::right
-                  << std::setw(8) << "NActive"
+                  << std::setw(8) << "NsHitAct"
                   << std::setw(10) << "Chi2Dof"
                   << std::setw(9) << "P"
                   << std::setw(9) << "Pt"
@@ -1570,7 +1827,7 @@ ClassImp(stntuple::THelixAnaModule)
       helixHeader << std::right
                   << std::setw(9) << "Chi2XY"
                   << std::setw(10) << "Chi2ZPhi"
-                  << std::setw(7) << "NHits"
+                  << std::setw(7) << "NsHit"
                   << std::setw(10) << "Radius"
                   << std::setw(10) << "Lambda"
                   << std::setw(9) << "TanDip"
@@ -1625,7 +1882,7 @@ ClassImp(stntuple::THelixAnaModule)
       }
 
       // =========================================================
-      // Dump SIM PARTICLE INFO (simID and NHits)
+      // Dump SIM PARTICLE INFO (simID and NsHit)
       // =========================================================
 
       std::ostringstream simTitle;
@@ -1636,7 +1893,7 @@ ClassImp(stntuple::THelixAnaModule)
       std::ostringstream simHeader;
       simHeader << std::right
                 << std::setw(10) << "SimID"
-                << std::setw(9) << "NHits"
+                << std::setw(9) << "NsHit"
                 << "\n";
 
       if (g_selOut.is_open()) g_selOut << simHeader.str();
@@ -1693,6 +1950,7 @@ ClassImp(stntuple::THelixAnaModule)
       header3 << "Helices (fNHelices[0]):                       " << fNHelices[0] << "\n";
       header3 << "Helices passing quality cuts (fNHelices[1]):  " << fNHelices[1] << "\n";
       header3 << extraHeader;
+      header3 << "Hit terms: sHit = straw hit, cHit = combo hit (made of one or more sHit)\n";
       header3 << "============================================================\n\n";
 
       if (out.is_open()) {
@@ -1705,7 +1963,7 @@ ClassImp(stntuple::THelixAnaModule)
       // TimeCluster info: [0] TimeClusterBlock (TZClusterFinder),
       // [1] PhiClusterBlock (PhiClusterFinder).
       // T0 = t-vs-z line-fit intercept at z=0 (tracker center) [ns].
-      // SimID/PDG/NHSim = MC particle making most straw hits in the cluster.
+      // SimID/PDG/NsHitSim = MC particle making most sHit in the cluster.
       // ---------------------------------------------------------
       const char* tclNames3[2] = {"TimeClusterBlock", "PhiClusterBlock"};
       for (int ib = 0; ib < 2; ++ib) {
@@ -1716,8 +1974,8 @@ ClassImp(stntuple::THelixAnaModule)
         std::ostringstream tclHeader3;
         tclHeader3 << std::right
                    << std::setw(4) << "Idx"
-                   << std::setw(7) << "NHits"
-                   << std::setw(7) << "NCH"
+                   << std::setw(7) << "NsHit"
+                   << std::setw(7) << "NcHit"
                    << std::setw(10) << "T0"
                    << std::setw(9) << "T0Err"
                    << std::setw(9) << "PosX"
@@ -1726,9 +1984,10 @@ ClassImp(stntuple::THelixAnaModule)
                    << std::setw(7) << "HelIdx"
                    << std::setw(8) << "SimID"
                    << std::setw(8) << "PDG"
-                   << std::setw(7) << "NHSim"
+                   << std::setw(9) << "NsHitSim"
                    << std::setw(9) << "McMom"
                    << std::setw(11) << "ClusterT"
+                   << std::setw(5) << "NMc"
                    << "\n";
 
         if (out.is_open()) out << tclTitle3.str() << tclHeader3.str();
@@ -1751,9 +2010,10 @@ ClassImp(stntuple::THelixAnaModule)
                << std::setw(7) << tc->HelixSeedIndex()
                << std::setw(8) << tc->fSimID
                << std::setw(8) << tc->fPdgID
-               << std::setw(7) << tc->fNHitsSimID
+               << std::setw(9) << tc->fNHitsSimID
                << std::setw(9) << std::setprecision(2) << tc->fMcMom
                << std::setw(11) << std::setprecision(3) << tc->ClusterTime()
+               << std::setw(5) << tc->NMcParticles()
                << "\n";
 
           if (out.is_open()) {
@@ -1777,17 +2037,19 @@ ClassImp(stntuple::THelixAnaModule)
       }
 
       std::ostringstream simTitle3;
-      simTitle3 << "--- MC PARTICLES (NStrawHits >= 10) ---\n";
-      simTitle3 << "    TCl0/TCl1: time clusters of TimeClusterBlock/PhiClusterBlock in which this particle\n";
-      simTitle3 << "    is the dominant MC particle, as idx(n) with n = N(straw hits) from this particle.\n";
-      simTitle3 << "    Hits of a particle in clusters where it is NOT dominant are not stored in the stntuple.\n";
+      simTitle3 << "--- MC PARTICLES (NsHit >= 10) ---\n";
+      simTitle3 << "    NsHit: N(sHit) of the particle.\n";
+      simTitle3 << "    TCl0/TCl1: time clusters of TimeClusterBlock/PhiClusterBlock containing sHit\n";
+      simTitle3 << "    of this particle, as idx(n) with n = N(sHit) from this particle in that cluster.\n";
+      simTitle3 << "    A trailing '*' means the stntuple has no full MC list (TStnTimeCluster < V4):\n";
+      simTitle3 << "    only clusters where the particle is the dominant one are shown.\n";
 
       std::ostringstream simHeader3;
       simHeader3 << std::right
                  << std::setw(10) << "SimID"
                  << std::setw(10) << "ParentID"
                  << std::setw(8) << "PDG"
-                 << std::setw(8) << "NHits"
+                 << std::setw(8) << "NsHit"
                  << std::setw(10) << "P"
                  << std::setw(10) << "Pt"
                  << std::setw(10) << "Px"
@@ -1796,8 +2058,8 @@ ClassImp(stntuple::THelixAnaModule)
                  << std::setw(12) << "Tstart"
                  << std::setw(12) << "Tend"
                  << std::setw(5) << "Sel"
-                 << std::setw(18) << "TCl0"
-                 << std::setw(18) << "TCl1"
+                 << "  " << std::setw(22) << "TCl0"
+                 << "  " << std::setw(22) << "TCl1"
                  << "\n";
 
       if (out.is_open()) out << simTitle3.str() << simHeader3.str();
@@ -1829,15 +2091,24 @@ ClassImp(stntuple::THelixAnaModule)
         int sid = s->GetUniqueID();
         bool sel = std::find(selectedPbarIDs3.begin(), selectedPbarIDs3.end(), sid) != selectedPbarIDs3.end();
 
-        // time clusters in which this particle is the dominant MC particle
+        // time clusters containing straw hits of this particle
         std::string tclList[2];
         for (int ib = 0; ib < 2; ++ib) {
           for (int itc = 0; itc < fNTimeClusters[ib]; ++itc) {
             TStnTimeCluster* tc = fTimeClusterBlock[ib]->TimeCluster(itc);
             if (!tc) continue;
-            if (tc->fSimID != sid) continue;
+
+            int nh = tc->NHitsFromSimID(sid);
+            std::string mark = "";
+            if (nh < 0) {
+              // no full MC list (old stntuple): fall back to the dominant particle
+              nh = (tc->fSimID == sid) ? tc->fNHitsSimID : 0;
+              mark = "*";
+            }
+            if (nh <= 0) continue;
+
             if (!tclList[ib].empty()) tclList[ib] += ",";
-            tclList[ib] += std::to_string(itc) + "(" + std::to_string(tc->fNHitsSimID) + ")";
+            tclList[ib] += std::to_string(itc) + "(" + std::to_string(nh) + ")" + mark;
           }
           if (tclList[ib].empty()) tclList[ib] = "-";
         }
@@ -1856,8 +2127,8 @@ ClassImp(stntuple::THelixAnaModule)
              << std::setw(12) << std::setprecision(3) << tStart
              << std::setw(12) << std::setprecision(3) << tEnd
              << std::setw(5) << (sel ? "Y" : "")
-             << std::setw(18) << tclList[0]
-             << std::setw(18) << tclList[1]
+             << "  " << std::setw(22) << tclList[0]
+             << "  " << std::setw(22) << tclList[1]
              << "\n";
 
         if (out.is_open()) {
@@ -1870,16 +2141,104 @@ ClassImp(stntuple::THelixAnaModule)
       if (out.is_open()) out << "\n";
 
       // ---------------------------------------------------------
+      // VIRTUAL DETECTOR crossings of the MC particles listed above
+      // (NStrawHits >= 10), stopping target and tracker virtual detectors only,
+      // in time order per particle. A particle reflected upstream of the
+      // tracker shows up as a late crossing of the tracker front.
+      // VD IDs: 9 ST_In, 10 ST_Out, 11 TT_Mid, 12 TT_MidInner,
+      //         13 TT_FrontHollow, 14 TT_FrontPA, 15 TT_Back
+      // ---------------------------------------------------------
+      {
+        std::ostringstream vdTitle;
+        vdTitle << "--- VIRTUAL DETECTOR CROSSINGS (ST and tracker VDs, particles with NsHit >= 10) ---\n";
+
+        std::ostringstream vdHeader;
+        vdHeader << std::right
+                 << std::setw(10) << "SimID"
+                 << std::setw(8) << "PDG"
+                 << std::setw(6) << "VDID"
+                 << std::setw(16) << "VD"
+                 << std::setw(12) << "Time"
+                 << std::setw(10) << "Z"
+                 << std::setw(10) << "P"
+                 << std::setw(10) << "Pz"
+                 << std::setw(5) << "Sel"
+                 << "\n";
+
+        if (out.is_open()) out << vdTitle.str() << vdHeader.str();
+        std::cout << vdTitle.str() << vdHeader.str();
+
+        if (fVDetBlock == nullptr or fVDetBlock->NStepPoints() == 0) {
+          const char* msg = "    no virtual detector step points in this event (VDetBlock empty or missing)\n";
+          if (out.is_open()) out << msg;
+          std::cout << msg;
+        } else {
+          std::vector<int> listedIDs;
+          for (int i = 0; i < fNSimp; ++i) {
+            TSimParticle* s = fSimpBlock->Particle(i);
+            if (s and s->NStrawHits() >= 10) listedIDs.push_back(s->GetUniqueID());
+          }
+
+          auto vdName = [](int id) -> const char* {
+            switch (id) {
+              case  9: return "ST_In";
+              case 10: return "ST_Out";
+              case 11: return "TT_Mid";
+              case 12: return "TT_MidInner";
+              case 13: return "TT_FrontHollow";
+              case 14: return "TT_FrontPA";
+              case 15: return "TT_Back";
+              default: return "other";
+            }
+          };
+
+          std::vector<TStepPointMC*> steps;
+          for (int k = 0; k < fVDetBlock->NStepPoints(); ++k) {
+            TStepPointMC* sp = fVDetBlock->StepPointMC(k);
+            if (sp->VolumeID() < 9 or sp->VolumeID() > 15) continue;
+            if (std::find(listedIDs.begin(), listedIDs.end(), sp->SimID()) == listedIDs.end()) continue;
+            steps.push_back(sp);
+          }
+          std::sort(steps.begin(), steps.end(), [](TStepPointMC* a, TStepPointMC* b) {
+            return (a->SimID() != b->SimID()) ? a->SimID() < b->SimID() : a->Time() < b->Time();
+          });
+
+          for (TStepPointMC* sp : steps) {
+            bool sel = std::find(selectedPbarIDs3.begin(), selectedPbarIDs3.end(), sp->SimID()) != selectedPbarIDs3.end();
+            std::ostringstream line;
+            line << std::right << std::fixed
+                 << std::setw(10) << sp->SimID()
+                 << std::setw(8) << sp->PDGCode()
+                 << std::setw(6) << sp->VolumeID()
+                 << std::setw(16) << vdName(sp->VolumeID())
+                 << std::setw(12) << std::setprecision(3) << sp->Time()
+                 << std::setw(10) << std::setprecision(1) << sp->Pos()->Z()
+                 << std::setw(10) << std::setprecision(2) << sp->Mom()->Mag()
+                 << std::setw(10) << std::setprecision(2) << sp->Mom()->Z()
+                 << std::setw(5) << (sel ? "Y" : "")
+                 << "\n";
+            if (out.is_open()) out << line.str();
+            std::cout << line.str();
+          }
+        }
+        std::cout << "\n";
+        if (out.is_open()) out << "\n";
+      }
+
+      // ---------------------------------------------------------
       // HELIX info: all reconstructed helices
       // ---------------------------------------------------------
       std::ostringstream helixTitle3;
       helixTitle3 << "--- HELIX (N=" << fNHelices[0] << ") ---\n";
+      helixTitle3 << "    NsHit: N(sHit) of non-outlier cHit, NcHit: N(cHit) incl. outliers, NcHit1: N(cHit) of SimID1 (old rule, >= 10 MeV/c)\n";
+      helixTitle3 << "    TCl: index of the TimeClusterBlock cluster whose cHit were used to build the helix (-1: not found)\n";
+      helixTitle3 << "    Purity = N(cHit) of the dominant MC particle / N(cHit) of all MC-matched cHit\n";
 
       std::ostringstream helixHeader3;
       helixHeader3 << std::right
                    << std::setw(9) << "Chi2XY"
                    << std::setw(10) << "Chi2ZPhi"
-                   << std::setw(7) << "NHits"
+                   << std::setw(7) << "NsHit"
                    << std::setw(10) << "Radius"
                    << std::setw(10) << "Lambda"
                    << std::setw(9) << "TanDip"
@@ -1889,11 +2248,15 @@ ClassImp(stntuple::THelixAnaModule)
                    << std::setw(10) << "T0"
                    << std::setw(10) << "T0Err"
                    << std::setw(11) << "ClusterT"
-                   << std::setw(7) << "TclIdx"
                    << std::setw(8) << "SimID1"
                    << std::setw(8) << "PDG1"
-                   << std::setw(6) << "NCH1"
+                   << std::setw(8) << "NcHit1"
                    << std::setw(11) << "Tstart1"
+                   << std::setw(7) << "NcHit"
+                   << std::setw(5) << "Kept"
+                   << std::setw(5) << "TCl"
+                   << std::setw(8) << "Purity"
+                   << "  " << "MC particles: SimID(PDG):N(cHit), sorted by N"
                    << "\n";
 
       if (out.is_open()) out << helixTitle3.str() << helixHeader3.str();
@@ -1915,6 +2278,14 @@ ClassImp(stntuple::THelixAnaModule)
         double t0Err = helix->T0Err();
         double clusterT = helix->ClusterTime();
 
+        // all MC particles contributing combo hits to this helix (TStnHelix v8)
+        std::ostringstream mcList;
+        for (int k = 0; k < helix->NStoredMcParticles(); ++k) {
+          if (k > 0) mcList << " ";
+          mcList << helix->McSimID(k) << "(" << helix->McPdgID(k) << "):" << helix->McNHits(k);
+        }
+        if (helix->NMcParticles() < 0) mcList << "n/a";
+
         std::ostringstream line;
         line << std::right << std::fixed
              << std::setw(9) << std::setprecision(3) << chi2xy
@@ -1929,11 +2300,15 @@ ClassImp(stntuple::THelixAnaModule)
              << std::setw(10) << std::setprecision(3) << t0
              << std::setw(10) << std::setprecision(3) << t0Err
              << std::setw(11) << std::setprecision(3) << clusterT
-             << std::setw(7) << helix->TimeClusterIndex()
              << std::setw(8) << helix->fSimpID1
              << std::setw(8) << helix->PDG1()
-             << std::setw(6) << helix->ComboHitsFrom1()
+             << std::setw(8) << helix->ComboHitsFrom1()
              << std::setw(11) << std::setprecision(3) << helix->SimpOrigin1().T()
+             << std::setw(7) << helix->NComboHits()
+             << std::setw(5) << (std::find(keptHelices.begin(), keptHelices.end(), helix) != keptHelices.end() ? "Y" : "")
+             << std::setw(5) << helix->TimeClusterIndex()
+             << std::setw(8) << std::setprecision(2) << helix->McPurity()
+             << "  " << mcList.str()
              << "\n";
 
         if (out.is_open()) {
@@ -1950,16 +2325,24 @@ ClassImp(stntuple::THelixAnaModule)
       // ---------------------------------------------------------
       std::ostringstream trackTitle3;
       trackTitle3 << "--- TRACK (N=" << fNTracks[0] << ") ---\n";
+      trackTitle3 << "    NsHitAct: active sHit in the fit, NsHit: all sHit associated with the track, NsHitWrong: sHit from another MC particle, NsHitAmb0: sHit with ambiguity 0\n";
+      trackTitle3 << "    SimID1/PDG1: MC particle producing the most sHit of the track\n";
 
       std::ostringstream trackHeader3;
       trackHeader3 << std::right
-                   << std::setw(8) << "NActive"
+                   << std::setw(8) << "NsHitAct"
                    << std::setw(10) << "Chi2Dof"
                    << std::setw(9) << "P"
                    << std::setw(9) << "Pt"
                    << std::setw(9) << "D0"
                    << std::setw(10) << "T0"
                    << std::setw(10) << "T0Err"
+                   << std::setw(7) << "NsHit"
+                   << std::setw(12) << "NsHitWrong"
+                   << std::setw(9) << "NDoublet"
+                   << std::setw(11) << "NsHitAmb0"
+                   << std::setw(8) << "SimID1"
+                   << std::setw(8) << "PDG1"
                    << "\n";
 
       if (out.is_open()) out << trackTitle3.str() << trackHeader3.str();
@@ -1977,6 +2360,12 @@ ClassImp(stntuple::THelixAnaModule)
              << std::setw(9) << std::setprecision(2) << trk->D0()
              << std::setw(10) << std::setprecision(3) << trk->T0()
              << std::setw(10) << std::setprecision(3) << trk->T0Err()
+             << std::setw(7) << trk->NHits()
+             << std::setw(12) << trk->NWrong()
+             << std::setw(9) << trk->NDoublets()
+             << std::setw(11) << trk->NHitsAmbZero()
+             << std::setw(8) << trk->SimID()
+             << std::setw(8) << trk->PDGCode()
              << "\n";
 
         if (out.is_open()) {
@@ -2020,6 +2409,62 @@ ClassImp(stntuple::THelixAnaModule)
 
       dump_event_info(g_selOutDt, extra.str());
     }
+
+    // =========================================================
+    // Dump events with fEffNSimp[1] == 2 and fNHelices[5] >= 5, i.e. 5 or more helices
+    // kept by the helix time selection. Same content as the dumps above (run/subrun/event,
+    // N(tracks), N(helices), time clusters, MC particles with the 2 selected
+    // pbar-origin particles flagged, helices with their MC particle lists, tracks).
+    // =========================================================
+    static std::ofstream g_selOutN5;
+    static bool g_filesOpenedN5 = false;
+
+    if (fEffNSimp[1] == 2 and fNHelices[5] >= 5) {
+      if (!g_filesOpenedN5) {
+        g_selOutN5.open("/exp/mu2e/app/users/kitagawa/20251126/selected_events_nkept_ge5.txt",
+                        std::ios::out | std::ios::app);
+        if (!g_selOutN5) {
+          std::cerr << "[WARN] Can't open selected_events_nkept_ge5.txt for append.\n";
+        }
+        g_filesOpenedN5 = true;
+      }
+
+      std::ostringstream extra;
+      extra << "N(good helices)      (fNHelices[2]):          " << fNHelices[2] << "\n";
+      extra << "N(selected helices)  (fNHelices[3]):          " << fNHelices[3] << "\n";
+      extra << "N(time groups)       (fNHelices[4]):          " << fNHelices[4] << "\n";
+      extra << "N(kept helices)      (fNHelices[5]):          " << fNHelices[5] << "\n";
+      extra << "fEffNSimp[1] (pbar-origin particles, >= 20 hits): " << fEffNSimp[1] << "\n";
+
+      dump_event_info(g_selOutN5, extra.str());
+    }
+
+    // =========================================================
+    // Dump events having an S-pure helix pair with |timediff| > spureDtDumpThre
+    // (fEffNSimp[1] == 2 events only, needs TStnHelix v8). The header lists every
+    // such pair with its timediff; helix i/j = row index in the HELIX table (0-based).
+    // =========================================================
+    static std::ofstream g_selOutSpDt;
+    static bool g_filesOpenedSpDt = false;
+
+    if (not spureLargeDt.empty()) {
+      if (!g_filesOpenedSpDt) {
+        g_selOutSpDt.open("/exp/mu2e/app/users/kitagawa/20251126/selected_events_spure_timediff_gt100.txt",
+                          std::ios::out | std::ios::app);
+        if (!g_selOutSpDt) {
+          std::cerr << "[WARN] Can't open selected_events_spure_timediff_gt100.txt for append.\n";
+        }
+        g_filesOpenedSpDt = true;
+      }
+
+      std::ostringstream extra;
+      extra << "Selection: S-pure helix pair with |T0_i - T0_j| > " << spureDtDumpThre << " ns\n";
+      for (const auto& line : spureLargeDt) extra << line;
+      extra << "N(good helices)      (fNHelices[2]):          " << fNHelices[2] << "\n";
+      extra << "N(kept helices)      (fNHelices[5]):          " << fNHelices[5] << "\n";
+
+      dump_event_info(g_selOutSpDt, extra.str());
+    }
   }
 
 
@@ -2044,6 +2489,7 @@ ClassImp(stntuple::THelixAnaModule)
 
     fTimeClusterBlock[0]->GetEntry(ientry);
     fTimeClusterBlock[1]->GetEntry(ientry);
+    if (fVDetBlock) fVDetBlock->GetEntry(ientry);
     //-----------------------------------------------------------------------------
     // assume electron in the first particle, otherwise the logic will need to
     // be changed
