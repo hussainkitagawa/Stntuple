@@ -38,6 +38,9 @@ class TStnTimeCluster : public TObject {
   };
 
 public:
+  enum {
+    kMaxMcParticles = 50		// V4: max N(MC particles) stored per cluster
+  };
 //-----------------------------------------------------------------------------
 // integers
 //-----------------------------------------------------------------------------
@@ -71,6 +74,16 @@ public:
 //-----------------------------------------------------------------------------
   const mu2e::TimeCluster*    fTimeCluster;          //!
 //-----------------------------------------------------------------------------
+// added in V4: all MC particles contributing straw hits to the cluster,
+// sorted by N(straw hits) in descending order, at most kMaxMcParticles stored.
+// Written explicitly by the Streamer (variable length on disk); must stay
+// after fTimeCluster, the fixed part is streamed by pointer arithmetic.
+//-----------------------------------------------------------------------------
+  int                       fNMcParticles;              // N(distinct MC particles), -1: not available (V1-V3)
+  int                       fMcSimID[kMaxMcParticles];  // SimParticle ID
+  int                       fMcPdgID[kMaxMcParticles];  // PDG code
+  int                       fMcNHits[kMaxMcParticles];  // N(straw hits) produced by the particle
+//-----------------------------------------------------------------------------
 // methods
 //-----------------------------------------------------------------------------
   TStnTimeCluster(int i = -1);
@@ -95,6 +108,17 @@ public:
   float   ClusterY      () { return fClusterY;     }
   float   ClusterZ      () { return fClusterZ;     }
 
+  int     NMcParticles      () const { return fNMcParticles; }
+  int     NStoredMcParticles() const {
+    return (fNMcParticles < 0) ? 0 : ((fNMcParticles < kMaxMcParticles) ? fNMcParticles : kMaxMcParticles);
+  }
+  int     McSimID       (int I) const { return fMcSimID[I]; }
+  int     McPdgID       (int I) const { return fMcPdgID[I]; }
+  int     McNHits       (int I) const { return fMcNHits[I]; }
+                                        // N(straw hits) from SimID in this cluster:
+                                        // 0 if not found, -1 if not available (V1-V3)
+  int     NHitsFromSimID(int SimID) const;
+
 //----------------------------------------------------------------------------
 // setters
 //----------------------------------------------------------------------------
@@ -110,8 +134,9 @@ public:
 //-----------------------------------------------------------------------------
   void ReadV1(TBuffer& R__b);
   void ReadV2(TBuffer& R__b);
+  void ReadV3(TBuffer& R__b);
 
-  ClassDef(TStnTimeCluster,3)
+  ClassDef(TStnTimeCluster,4)
 };
 
 #endif

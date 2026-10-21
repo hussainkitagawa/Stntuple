@@ -3,6 +3,7 @@
 //  2020-10-18 P.M. rewrite 
 //-----------------------------------------------------------------------------
 #include <cstdio>
+#include <algorithm>
 #include "TROOT.h"
 #include "TFolder.h"
 #include "TLorentzVector.h"
@@ -173,7 +174,7 @@ int  StntupleInitTimeClusterBlock::InitDataBlock(TStnDataBlock* Block, AbsEvent*
 	  }
 	}
 	
-	if (sim && (found == 0)) {
+	if (sim && (found == 0) && (np < max_np)) {
 	  sim_id  [np] = id;
 	  simm    [np] = sim;
 	  pdg_code[np] = sim->pdgId();
@@ -203,6 +204,22 @@ int  StntupleInitTimeClusterBlock::InitDataBlock(TStnDataBlock* Block, AbsEvent*
       tc->fPdgID      = pdg_code[ipart];
       tc->fNHitsSimID = max_nh;
       tc->fMcMom      = best_sim->startMomentum().mag() ;
+    }
+//-----------------------------------------------------------------------------
+// store all MC particles contributing straw hits to the cluster,
+// sorted by N(straw hits) in descending order
+//-----------------------------------------------------------------------------
+    int order[max_np];
+    for (int ip=0; ip<np; ip++) order[ip] = ip;
+    std::stable_sort(order, order+np, [&](int a, int b) { return sim_nh[a] > sim_nh[b]; });
+
+    tc->fNMcParticles = np;
+    int nstore = std::min(np, (int) TStnTimeCluster::kMaxMcParticles);
+    for (int k=0; k<nstore; k++) {
+      int ip = order[k];
+      tc->fMcSimID[k] = sim_id  [ip];
+      tc->fMcPdgID[k] = pdg_code[ip];
+      tc->fMcNHits[k] = sim_nh  [ip];
     }
   }
 

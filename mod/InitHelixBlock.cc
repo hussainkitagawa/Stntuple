@@ -3,6 +3,8 @@
 // Feb 2023 P.Murat: make initialization a class
 //-----------------------------------------------------------------------------
 #include <cstdio>
+#include <algorithm>
+#include <map>
 #include "TROOT.h"
 #include "TFolder.h"
 #include "TLorentzVector.h"
@@ -112,6 +114,8 @@ int  StntupleInitHelixBlock::InitDataBlock(TStnDataBlock* Block, AbsEvent* Evt, 
   if(verbose > 3) printf("InitHelixBlock %s: Printing helix collection info: N(helices) = %2i\n", fHSeedCollTag.encode().c_str(), nhelices);
   for (int i=0; i<nhelices; i++) {
     std::vector<int>     hits_simp_id, hits_simp_index, hits_simp_z;
+                                        // all MC particles: (sim ID, PDG, N(combo hits))
+    std::vector<int>     mc_sim_id, mc_pdg_id, mc_nhits;
 
     helix                  = cb->NewHelix();
     tmpHel                 = &fListOfHSeeds->at(i);
@@ -180,6 +184,39 @@ int  StntupleInitHelixBlock::InitDataBlock(TStnDataBlock* Block, AbsEvent* Evt, 
         std::vector<StrawDigiIndex> shids;
         tmpHel->hits().fillStrawDigiIndices(j,shids);
 
+//-----------------------------------------------------------------------------
+// full MC particle list: assign this combo hit to the MC particle producing
+// most of its straw hits (no momentum cut) and count combo hits per particle
+//-----------------------------------------------------------------------------
+        {
+          std::vector<int> ch_id, ch_pdg, ch_n;
+          for (size_t k=0; k<shids.size(); ++k) {
+            const mu2e::StrawDigiMC* sdmc = &sdmcColl->at(shids[k]);
+            auto const& step = sdmc->earlyStrawGasStep();
+            if (step.isNull()) continue;
+            art::Ptr<mu2e::SimParticle> const& simptr = step->simParticle();
+            int sim_id = simptr->id().asInt();
+            auto it = std::find(ch_id.begin(), ch_id.end(), sim_id);
+            if (it != ch_id.end()) ch_n[it - ch_id.begin()] += 1;
+            else {
+              ch_id.push_back (sim_id);
+              ch_pdg.push_back(simptr->pdgId());
+              ch_n.push_back  (1);
+            }
+          }
+
+          if (!ch_id.empty()) {
+            int ibest = std::max_element(ch_n.begin(), ch_n.end()) - ch_n.begin();
+            auto it = std::find(mc_sim_id.begin(), mc_sim_id.end(), ch_id[ibest]);
+            if (it != mc_sim_id.end()) mc_nhits[it - mc_sim_id.begin()] += 1;
+            else {
+              mc_sim_id.push_back(ch_id [ibest]);
+              mc_pdg_id.push_back(ch_pdg[ibest]);
+              mc_nhits.push_back (1);
+            }
+          }
+        }
+
         if(verbose > 5) printf(" %2i: Idx   ID  PDGID  SimID Parent   Z     T      P(MC)\n", j);
         const float minP(10.);//MeV/c, minimum MC sim P to count in the hits
         for (size_t k=0; k<shids.size(); ++k) {
@@ -202,6 +239,24 @@ int  StntupleInitHelixBlock::InitDataBlock(TStnDataBlock* Block, AbsEvent* Evt, 
         }
       }
       nStrawHits += hit->nStrawHits();
+    }
+
+//-----------------------------------------------------------------------------
+// store all MC particles contributing combo hits to the helix,
+// sorted by N(combo hits) in descending order
+//-----------------------------------------------------------------------------
+    int nmc = mc_sim_id.size();
+    std::vector<int> order(nmc);
+    for (int ip=0; ip<nmc; ip++) order[ip] = ip;
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return mc_nhits[a] > mc_nhits[b]; });
+
+    helix->fNMcParticles = sdmcColl ? nmc : -1;
+    int nstore = std::min(nmc, (int) TStnHelix::kMaxMcParticles);
+    for (int k=0; k<nstore; k++) {
+      int ip = order[k];
+      helix->fMcSimID[k] = mc_sim_id[ip];
+      helix->fMcPdgID[k] = mc_pdg_id[ip];
+      helix->fMcNHits[k] = mc_nhits [ip];
     }
 
 //-----------------------------------------------------------------------------
@@ -372,6 +427,22 @@ int  StntupleInitHelixBlock::InitDataBlock(TStnDataBlock* Block, AbsEvent* Evt, 
     helix->fNHits        = nStrawHits;
     helix->fChi2XYNDof   = robustHel->chi2dXY();
     helix->fChi2PhiZNDof = robustHel->chi2dZPhi();
+  }
+//-----------------------------------------------------------------------------
+// share of each MC particle: N(combo hits) in this helix divided by the sum
+// of its N(combo hits) over all helices of the block
+//-----------------------------------------------------------------------------
+  std::map<int,int> mc_total;
+  for (int i=0; i<nhelices; i++) {
+    TStnHelix* h = cb->Helix(i);
+    for (int k=0; k<h->NStoredMcParticles(); k++) mc_total[h->fMcSimID[k]] += h->fMcNHits[k];
+  }
+  for (int i=0; i<nhelices; i++) {
+    TStnHelix* h = cb->Helix(i);
+    for (int k=0; k<h->NStoredMcParticles(); k++) {
+      int ntot = mc_total[h->fMcSimID[k]];
+      h->fMcShare[k] = (ntot > 0) ? float(h->fMcNHits[k])/ntot : 0.;
+    }
   }
 //-----------------------------------------------------------------------------
 // on return set event and run numbers to mark block as initialized

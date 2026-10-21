@@ -629,6 +629,22 @@ void TStnHelix::ReadV6(TBuffer &R__b) {
 
 
 //-----------------------------------------------------------------------------
+// v7: same fixed part as v8, no MC particle list
+//-----------------------------------------------------------------------------
+void TStnHelix::ReadV7(TBuffer &R__b) {
+  int nwi = ((int*  ) &fT0            ) - &fNHits;
+  int nwf = ((float*) &fHelix         ) - &fT0;
+
+  fSimpMom1.Streamer(R__b);
+  fSimpOrigin1.Streamer(R__b);
+  fSimpMom2.Streamer(R__b);
+  fSimpOrigin2.Streamer(R__b);
+
+  R__b.ReadFastArray(&fNHits, nwi);
+  R__b.ReadFastArray(&fT0   , nwf);
+}
+
+//-----------------------------------------------------------------------------
 void TStnHelix::Streamer(TBuffer& R__b) {
   int   nwi, nwf;
   
@@ -638,20 +654,30 @@ void TStnHelix::Streamer(TBuffer& R__b) {
   if (R__b.IsReading()) {
     Version_t R__v = R__b.ReadVersion(); 
 
+    fNMcParticles = -1;                 // added in v8, not available in older versions
+
     if      (R__v == 1) ReadV1 (R__b);
     else if (R__v == 2) ReadV2 (R__b);
     else if (R__v == 3) ReadV3 (R__b);
     else if (R__v == 4) ReadV4 (R__b);
     else if (R__v == 5) ReadV5 (R__b);
     else if (R__v == 6) ReadV6 (R__b);
+    else if (R__v == 7) ReadV7 (R__b);
     else {
       fSimpMom1.Streamer(R__b);
       fSimpOrigin1.Streamer(R__b);
       fSimpMom2.Streamer(R__b);
       fSimpOrigin2.Streamer(R__b);
-					// current version: V7
+					// current version: V8
       R__b.ReadFastArray(&fNHits, nwi);
       R__b.ReadFastArray(&fT0   , nwf);
+
+      R__b >> fNMcParticles;
+      int ns = NStoredMcParticles();
+      R__b.ReadFastArray(fMcSimID, ns);
+      R__b.ReadFastArray(fMcPdgID, ns);
+      R__b.ReadFastArray(fMcNHits, ns);
+      R__b.ReadFastArray(fMcShare, ns);
     }
   }
   else {
@@ -663,6 +689,13 @@ void TStnHelix::Streamer(TBuffer& R__b) {
 
     R__b.WriteFastArray(&fNHits, nwi);
     R__b.WriteFastArray(&fT0   , nwf);
+
+    R__b << fNMcParticles;
+    int ns = NStoredMcParticles();
+    R__b.WriteFastArray(fMcSimID, ns);
+    R__b.WriteFastArray(fMcPdgID, ns);
+    R__b.WriteFastArray(fMcNHits, ns);
+    R__b.WriteFastArray(fMcShare, ns);
   }
 }
 
@@ -719,10 +752,33 @@ TStnHelix::TStnHelix(int Number) {
   fHitRatio      = 0; 
 
   for (int i=0; i<kNFreeFloats; i++) fFloat[i] = 0;
+
+  fNMcParticles  = -1;
 }
 
 //_____________________________________________________________________________
 TStnHelix::~TStnHelix() {
+}
+
+//-----------------------------------------------------------------------------
+int TStnHelix::NHitsFromSimID(int SimID) const {
+  if (fNMcParticles < 0) return -1;
+
+  int ns = NStoredMcParticles();
+  for (int i=0; i<ns; i++) {
+    if (fMcSimID[i] == SimID) return fMcNHits[i];
+  }
+  return 0;
+}
+
+//-----------------------------------------------------------------------------
+float TStnHelix::McPurity() const {
+  int ns = NStoredMcParticles();
+  if (ns <= 0) return -1;
+
+  int nsum = 0;
+  for (int i=0; i<ns; i++) nsum += fMcNHits[i];
+  return (nsum > 0) ? float(fMcNHits[0])/nsum : -1;
 }
 
 

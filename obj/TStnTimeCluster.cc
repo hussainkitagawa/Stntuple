@@ -70,6 +70,8 @@ void TStnTimeCluster::ReadV1(TBuffer &R__b) {
   fPdgID             = -9999999;	// added in V3
   fNHitsSimID        = -1;		// added in V3
   fMcMom             = -1.;		// added in V3
+
+  fNMcParticles      = -1;		// added in V4
 }
 
 
@@ -130,6 +132,22 @@ void TStnTimeCluster::ReadV2(TBuffer &R__b) {
   fPdgID             = -999999;		// added in V3
   fNHitsSimID        = -1;		// added in V3
   fMcMom             = -1.;		// added in V3
+
+  fNMcParticles      = -1;		// added in V4
+}
+
+//-----------------------------------------------------------------------------
+// V3: same fixed part as V4, no MC particle list
+//-----------------------------------------------------------------------------
+void TStnTimeCluster::ReadV3(TBuffer &R__b) {
+
+  int nwi = ((int*  ) &fT0            ) - &fNHits;
+  int nwf = ((float*) &fTimeCluster   ) - &fT0;
+
+  R__b.ReadFastArray(&fNHits, nwi);
+  R__b.ReadFastArray(&fT0   , nwf);
+
+  fNMcParticles      = -1;		// added in V4
 }
 
 //-----------------------------------------------------------------------------
@@ -143,10 +161,17 @@ void TStnTimeCluster::Streamer(TBuffer& R__b) {
     
     if      (R__v == 1) ReadV1(R__b);
     else if (R__v == 2) ReadV2(R__b);
+    else if (R__v == 3) ReadV3(R__b);
     else {
-                                        // current version: V3
+                                        // current version: V4
       R__b.ReadFastArray(&fNHits, nwi);
       R__b.ReadFastArray(&fT0   , nwf);
+
+      R__b >> fNMcParticles;
+      int ns = NStoredMcParticles();
+      R__b.ReadFastArray(fMcSimID, ns);
+      R__b.ReadFastArray(fMcPdgID, ns);
+      R__b.ReadFastArray(fMcNHits, ns);
     }
   }
   else {
@@ -154,6 +179,12 @@ void TStnTimeCluster::Streamer(TBuffer& R__b) {
 
     R__b.WriteFastArray(&fNHits, nwi);
     R__b.WriteFastArray(&fT0   , nwf);
+
+    R__b << fNMcParticles;
+    int ns = NStoredMcParticles();
+    R__b.WriteFastArray(fMcSimID, ns);
+    R__b.WriteFastArray(fMcPdgID, ns);
+    R__b.WriteFastArray(fMcNHits, ns);
   }
 }
 
@@ -181,10 +212,23 @@ TStnTimeCluster::TStnTimeCluster(int i) {
   fPdgID         = -999999;
   fNHitsSimID    = -1;
   fMcMom         = -1.;
+
+  fNMcParticles  = -1;
 }
 
 //_____________________________________________________________________________
 TStnTimeCluster::~TStnTimeCluster() {
+}
+
+//-----------------------------------------------------------------------------
+int TStnTimeCluster::NHitsFromSimID(int SimID) const {
+  if (fNMcParticles < 0) return -1;
+
+  int ns = NStoredMcParticles();
+  for (int i=0; i<ns; i++) {
+    if (fMcSimID[i] == SimID) return fMcNHits[i];
+  }
+  return 0;
 }
 
 

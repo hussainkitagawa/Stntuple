@@ -54,6 +54,9 @@ class TStnHelix : public TObject {
   };
 
 public:
+  enum {
+    kMaxMcParticles = 50		// v8: max N(MC particles) stored per helix
+  };
 //-----------------------------------------------------------------------------
 // vectors, added in V3
 //-----------------------------------------------------------------------------
@@ -111,6 +114,17 @@ public:
   const mu2e::HelixSeed*    fHelix;  //!
   int                       fNumber; //! sequential number in the list, set by TStnHelixBlock::Streamer
 //-----------------------------------------------------------------------------
+// added in v8: all MC particles contributing (non-outlier) combo hits to the
+// helix, sorted by N(combo hits) in descending order, at most
+// kMaxMcParticles stored. Written explicitly by the Streamer (variable length
+// on disk); must stay after fHelix, the fixed part is streamed by pointer arithmetic.
+//-----------------------------------------------------------------------------
+  int                       fNMcParticles;              // N(distinct MC particles), -1: not available (v1-v7)
+  int                       fMcSimID[kMaxMcParticles];  // SimParticle ID
+  int                       fMcPdgID[kMaxMcParticles];  // PDG code
+  int                       fMcNHits[kMaxMcParticles];  // N(combo hits) assigned to the particle (majority of straw hits)
+  float                     fMcShare[kMaxMcParticles];  // share: fMcNHits / sum of fMcNHits of this particle over all helices of the block
+//-----------------------------------------------------------------------------
 // methods
 //-----------------------------------------------------------------------------
   TStnHelix(int Number = -1);
@@ -134,6 +148,22 @@ public:
   int     PDGMother2      () { return fSimpPDGM2; }
   int     ComboHitsFrom2  () { return fSimpId2Hits; }
   int     PropDir         () { return fPropDir;}
+  int     SimpID1         () { return fSimpID1;}
+
+  int     NMcParticles      () const { return fNMcParticles; }
+  int     NStoredMcParticles() const {
+    return (fNMcParticles < 0) ? 0 : ((fNMcParticles < kMaxMcParticles) ? fNMcParticles : kMaxMcParticles);
+  }
+  int     McSimID       (int I) const { return fMcSimID[I]; }
+  int     McPdgID       (int I) const { return fMcPdgID[I]; }
+  int     McNHits       (int I) const { return fMcNHits[I]; }
+  float   McShare       (int I) const { return fMcShare[I]; }
+                                        // purity: fraction of MC-matched combo hits from the dominant
+                                        // particle (index 0); -1 if not available
+  float   McPurity      () const;
+                                        // N(combo hits) from SimID in this helix:
+                                        // 0 if not found, -1 if not available (v1-v7)
+  int     NHitsFromSimID(int SimID) const;
 
   float   T0         () { return  fT0;     }
   float   T0Err      () { return  fT0Err;  }
@@ -193,8 +223,9 @@ public:
   void ReadV4(TBuffer& R__b);   // 2019-02-27 G.P.
   void ReadV5(TBuffer& R__b);   // 2024-03-07 G.P.
   void ReadV6(TBuffer& R__b);   // 2024-10-17 G.P.
+  void ReadV7(TBuffer& R__b);
 
-  ClassDef(TStnHelix,7);
+  ClassDef(TStnHelix,8);
 };
 
 #endif
