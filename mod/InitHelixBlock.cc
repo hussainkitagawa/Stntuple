@@ -495,8 +495,9 @@ Int_t StntupleInitHelixBlock::ResolveLinks(TStnDataBlock* Block, AbsEvent* AnEve
 
   TStnEvent*      ev = Block->GetEvent();
   TStnHelixBlock* hb = (TStnHelixBlock*) Block;
-  int             nh(0);
-  if (ksfha) nh = hb->NHelices();
+                                        // the time cluster index does not need the associations,
+                                        // so loop over all helices even if ksfha is not available
+  int             nh = hb->NHelices();
 //-----------------------------------------------------------------------------
 // this is a hack, to be fixed soon
 //-----------------------------------------------------------------------------
@@ -562,6 +563,27 @@ Int_t StntupleInitHelixBlock::ResolveLinks(TStnDataBlock* Block, AbsEvent* AnEve
         tclIndex = j;
         break;
       }
+    }
+//-----------------------------------------------------------------------------
+// MergeHelices copies the time cluster of each helix into its own collection,
+// so the pointer comparison above fails for merged helices. Match by content:
+// identical straw hit index list and, to resolve the copies made by
+// TZClusterFinder (same hits, different calo cluster), the same calo cluster.
+// If no calo cluster matches, take the first time cluster with the same hits.
+//-----------------------------------------------------------------------------
+    if ((tclIndex < 0) and (ktimepeak != nullptr)) {
+      int firstSameHits(-1);
+      for (int j=0; j<ntpeaks; ++j) {
+        const mu2e::TimeCluster* tc = tcb->TimeCluster(j)->fTimeCluster;
+        if (tc == nullptr) continue;
+        if (tc->_strawHitIdxs != ktimepeak->_strawHitIdxs) continue;
+        if (firstSameHits < 0) firstSameHits = j;
+        if (tc->_caloCluster == ktimepeak->_caloCluster) {
+          tclIndex = j;
+          break;
+        }
+      }
+      if (tclIndex < 0) tclIndex = firstSameHits;
     }
 
     hel->SetTimeClusterIndex(tclIndex);
