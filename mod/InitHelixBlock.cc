@@ -284,21 +284,44 @@ int  StntupleInitHelixBlock::InitDataBlock(TStnDataBlock* Block, AbsEvent* Evt, 
 //-----------------------------------------------------------------------------
 // find the SimParticle that created the majority of the hits
 //-----------------------------------------------------------------------------
-    int     max(0), mostvalueindex(-1), mostvalue(-1), id_max(0);
-    float   dz_most(1e4);
-
-    for (int  k=0; k<(int)hits_simp_id.size(); ++k){
-      int co = (int)std::count(hits_simp_id.begin(), hits_simp_id.end(), hits_simp_id[k]);
-      if ( (co>0) && (co>max)) {
-        float  dz      = std::fabs(hits_simp_z[k]);
-        if (dz < dz_most){
-          dz_most        = dz;
-          max            = co;
-          id_max         = k;
-          mostvalue      = hits_simp_id[k];
-          mostvalueindex = hits_simp_index[k];
-        }
+//-----------------------------------------------------------------------------
+// The previous selection required both more hits AND a smaller |z| of the
+// current hit than the current best, so a particle with more hits but all of
+// them downstream of the current best could never be selected.
+// Now: the particle with the most hits; for equal N(hits), the one whose hits
+// are more upstream, i.e. with the smaller mean z.
+// Per-particle statistics: N(hits), mean z, and the first hit (k) of the particle.
+//-----------------------------------------------------------------------------
+    struct SimpHitStat_t { int id; int nh; double sumz; int kfirst; };
+    std::vector<SimpHitStat_t> simp_stat;
+    for (int k=0; k<(int)hits_simp_id.size(); ++k) {
+      bool found = false;
+      for (auto& st : simp_stat) {
+        if (st.id == hits_simp_id[k]) { st.nh += 1; st.sumz += hits_simp_z[k]; found = true; break; }
       }
+      if (not found) simp_stat.push_back({hits_simp_id[k], 1, (double) hits_simp_z[k], k});
+    }
+                                        // index in simp_stat of the best particle, excluding id 'Exclude'
+    auto find_best_simp = [&](int Exclude, bool UseExclude) {
+      int best = -1;
+      for (int is=0; is<(int)simp_stat.size(); ++is) {
+        const auto& st = simp_stat[is];
+        if (UseExclude and st.id == Exclude) continue;
+        if (best < 0) { best = is; continue; }
+        const auto& bt = simp_stat[best];
+        if ((st.nh > bt.nh) or ((st.nh == bt.nh) and (st.sumz/st.nh < bt.sumz/bt.nh))) best = is;
+      }
+      return best;
+    };
+
+    int     max(0), mostvalueindex(-1), mostvalue(-1), id_max(0);
+
+    int ibest = find_best_simp(-1, false);
+    if (ibest >= 0) {
+      max            = simp_stat[ibest].nh;
+      id_max         = simp_stat[ibest].kfirst;
+      mostvalue      = simp_stat[ibest].id;
+      mostvalueindex = hits_simp_index[id_max];
     }
 
     helix->fSimpId1Hits = max;
@@ -364,19 +387,11 @@ int  StntupleInitHelixBlock::InitDataBlock(TStnDataBlock* Block, AbsEvent* Evt, 
       if (max != int(hits_simp_id.size()) ){  //nhits){
         int   secondmostvalueindex(-1);
         max     = 0;//reset max
-        dz_most = 1e4;
-
-        for (int k=0; k<(int)hits_simp_id.size(); ++k){
-          int value = hits_simp_id[k];
-          int co = (int)std::count(hits_simp_id.begin(), hits_simp_id.end(), value);
-          if ( (co>0) && (co>=max) && (value != mostvalue)) {
-            float  dz      = std::fabs(hits_simp_z[k]);
-            if (dz < dz_most){
-              max                  = co;
-              dz_most              = dz;
-              secondmostvalueindex = hits_simp_index[k];
-            }
-          }
+                                        // same rule as for the first particle, excluding it
+        int isecond = find_best_simp(mostvalue, true);
+        if (isecond >= 0) {
+          max                  = simp_stat[isecond].nh;
+          secondmostvalueindex = hits_simp_index[simp_stat[isecond].kfirst];
         }
         helix->fSimpId2Hits = max;
 
